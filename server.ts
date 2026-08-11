@@ -30,11 +30,14 @@ const createTransporter = async () => {
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     return nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true',
+      port: Number(process.env.SMTP_PORT) || 465,
+      secure: process.env.SMTP_SECURE === 'true' || Number(process.env.SMTP_PORT) === 465,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
+      },
+      tls: {
+        rejectUnauthorized: false,
       },
     });
   }
@@ -228,7 +231,7 @@ app.post('/api/contact', async (req, res) => {
     const senderMailOptions = {
       from: `"Precious Imonikhe" <${process.env.SMTP_USER || 'no-reply@preciousimonikhe.com'}>`,
       to: email,
-      subject: `Inquiry Received — Precious Imonikhe`,
+      subject: `We've Received Your Message`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111; max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 12px; padding: 24px; background: #ffffff;">
           <h2 style="color: #d97706; margin-top: 0;">Thank You for Reaching Out!</h2>

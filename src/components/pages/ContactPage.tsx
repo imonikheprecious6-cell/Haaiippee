@@ -16,20 +16,35 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
   const [message, setMessage] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+    setErrorMessage(null);
+
     try {
-      await fetch('/api/contact', {
+      const res = await fetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, phone, service, message }),
       });
+
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        setErrorMessage(
+          data.error || 'Something went wrong while sending your message. Please try again or contact me directly.'
+        );
+        return;
+      }
+
       setSubmitted(true);
     } catch (err) {
       console.error('Contact form submission error:', err);
-      setSubmitted(true);
+      setErrorMessage(
+        'Something went wrong while sending your message. Please try again or contact me directly.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -235,6 +250,12 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
                   <h3 className="text-xl font-bold text-neutral-100 dark:text-neutral-100 light:text-neutral-900">
                     Send a Direct Inquiry
                   </h3>
+
+                  {errorMessage && (
+                    <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
+                      <span>{errorMessage}</span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
