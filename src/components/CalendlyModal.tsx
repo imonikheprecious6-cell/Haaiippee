@@ -11,24 +11,27 @@ interface CalendlyModalProps {
 export const CalendlyModal: React.FC<CalendlyModalProps> = ({ isOpen, onClose }) => {
   // Generate next available days excluding Sunday (Mon, Tue, Wed, Thu, Fri, Sat)
   const availableDates = useMemo(() => {
-    const days: { label: string; date: string; fullString: string }[] = [];
+    const days: { label: string; date: string; isoDate: string }[] = [];
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     
-    let current = new Date();
+    const current = new Date();
     current.setDate(current.getDate() + 1); // Start tomorrow
 
     while (days.length < 6) {
       const dayOfWeek = current.getDay(); // 0 is Sunday
       if (dayOfWeek !== 0) { // Exclude Sunday
-        const dayName = dayNames[dayOfWeek];
-        const month = monthNames[current.getMonth()];
+        const year = current.getFullYear();
+        const monthIdx = current.getMonth();
         const dateNum = current.getDate();
+        const dayName = dayNames[dayOfWeek];
+        const month = monthNames[monthIdx];
         const dateString = `${dayName.slice(0, 3)}, ${month} ${dateNum}`;
+        const isoDate = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(dateNum).padStart(2, '0')}`;
         days.push({
           label: dayName,
           date: dateString,
-          fullString: `${dayName}, ${month} ${dateNum}`,
+          isoDate,
         });
       }
       current.setDate(current.getDate() + 1);
@@ -45,7 +48,7 @@ export const CalendlyModal: React.FC<CalendlyModalProps> = ({ isOpen, onClose })
     '09:00 PM', '09:30 PM', '10:00 PM', '10:30 PM', '11:00 PM', '11:30 PM'
   ];
 
-  const [selectedDate, setSelectedDate] = useState<string>(availableDates[0]?.fullString || 'Monday, Aug 10');
+  const [selectedDate, setSelectedDate] = useState<string>(availableDates[0]?.isoDate || '');
   const [selectedTime, setSelectedTime] = useState<string>('10:00 AM');
   const [step, setStep] = useState<'schedule' | 'form' | 'success'>('schedule');
 
@@ -76,9 +79,14 @@ export const CalendlyModal: React.FC<CalendlyModalProps> = ({ isOpen, onClose })
 
   useEffect(() => {
     if (isOpen) {
+      setSelectedDate((prev) =>
+        prev && availableDates.some((d) => d.isoDate === prev)
+          ? prev
+          : availableDates[0]?.isoDate || ''
+      );
       fetchBookedSlots();
     }
-  }, [isOpen]);
+  }, [isOpen, availableDates]);
 
   const isSlotBooked = (dateStr: string, timeStr: string) => {
     return bookedSlots.some(
@@ -90,39 +98,83 @@ export const CalendlyModal: React.FC<CalendlyModalProps> = ({ isOpen, onClose })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    if (trimmedName.length < 2) {
+      setBookingError('Please enter your full name (at least 2 characters).');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(trimmedEmail)) {
+      setBookingError('Please enter a valid email address.');
+      return;
+    }
+
     setIsSubmitting(true);
     setBookingError(null);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
     try {
       const res = await fetch('/api/book-call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name,
-          email,
-          phone,
+          name: trimmedName,
+          email: trimmedEmail,
+          phone: phone.trim(),
           selectedDate,
           selectedTime,
           projectType,
-          notes,
+          notes: notes.trim(),
         }),
+        signal: controller.signal,
       });
 
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: { success?: boolean; code?: string; error?: string } | null = null;
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = null;
+        }
+      }
 
-      if (!res.ok || data.error) {
-        setBookingError(data.error || 'This slot is no longer available. Please select another time slot.');
-        await fetchBookedSlots();
-        setStep('schedule');
+      if (!res.ok || !data?.success || data?.error) {
+        const isSlotConflict = res.status === 409 || data?.code === 'SLOT_BOOKED';
+        setBookingError(
+          data?.error ||
+            (isSlotConflict
+              ? 'This slot is no longer available. Please select another time slot.'
+              : 'We could not send your booking confirmation email right now. Please try again or contact Precious directly via WhatsApp or email.')
+        );
+        if (isSlotConflict) {
+          await fetchBookedSlots();
+          setStep('schedule');
+        }
         return;
       }
 
+      setName(trimmedName);
+      setEmail(trimmedEmail);
       await fetchBookedSlots();
       setStep('success');
     } catch (err) {
       console.error('Booking API call error:', err);
-      setStep('success');
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setBookingError(
+          'Booking took longer than expected to process. Please try again or message Precious directly on WhatsApp.'
+        );
+      } else {
+        setBookingError(
+          'Unable to reach the server to complete your booking. Please check your connection and try again, or contact Precious via WhatsApp or email.'
+        );
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setIsSubmitting(false);
     }
   };
@@ -213,14 +265,14 @@ export const CalendlyModal: React.FC<CalendlyModalProps> = ({ isOpen, onClose })
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                     {availableDates.map((item) => (
                       <button
-                        key={item.fullString}
+                        key={item.isoDate}
                         type="button"
                         onClick={() => {
-                          setSelectedDate(item.fullString);
+                          setSelectedDate(item.isoDate);
                           setBookingError(null);
                         }}
                         className={`p-3 rounded-xl border text-center text-xs font-medium transition-all ${
-                          selectedDate === item.fullString
+                          selectedDate === item.isoDate
                             ? 'bg-amber-500 text-neutral-950 border-amber-400 font-semibold shadow-md'
                             : 'bg-neutral-950/60 dark:bg-neutral-950/60 light:bg-stone-100 border-neutral-800 dark:border-neutral-800 light:border-stone-300 text-neutral-300 dark:text-neutral-300 light:text-neutral-700 hover:border-neutral-700'
                         }`}
@@ -315,6 +367,16 @@ export const CalendlyModal: React.FC<CalendlyModalProps> = ({ isOpen, onClose })
                     Selected Slot: <span className="font-semibold text-neutral-200">{selectedDate} at {selectedTime}</span>
                   </p>
                 </div>
+
+                {bookingError && (
+                  <div
+                    role="alert"
+                    className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5"
+                  >
+                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    <span className="leading-relaxed">{bookingError}</span>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

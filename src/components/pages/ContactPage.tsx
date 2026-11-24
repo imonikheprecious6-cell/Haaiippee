@@ -1,12 +1,20 @@
-import React, { useState } from 'react';
-import { motion } from 'motion/react';
-import { Mail, MessageSquare, Instagram, Send, Calendar, CheckCircle2, Globe, Clock, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Mail, MessageSquare, Instagram, Send, Calendar, CheckCircle2, Globe, Clock, Loader2, AlertCircle } from 'lucide-react';
 import { HeroSection } from '../HeroSection';
 import { CONTACT_INFO } from '../../data/contactData';
 
 interface ContactPageProps {
   onOpenCalendly: () => void;
 }
+
+interface FieldErrors {
+  name?: string;
+  email?: string;
+  phone?: string;
+  message?: string;
+}
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
   const [name, setName] = useState('');
@@ -17,35 +25,168 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const phoneInputRef = useRef<HTMLInputElement | null>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const errorBannerRef = useRef<HTMLDivElement | null>(null);
+
+  const validateForm = () => {
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    const trimmedPhone = phone.trim();
+    const trimmedMessage = message.trim();
+
+    const errors: FieldErrors = {};
+
+    if (!trimmedName) {
+      errors.name = 'Please enter your name.';
+    } else if (trimmedName.length < 2) {
+      errors.name = 'Name must be at least 2 characters.';
+    } else if (trimmedName.length > 120) {
+      errors.name = 'Name must be 120 characters or fewer.';
+    }
+
+    if (!trimmedEmail) {
+      errors.email = 'Please enter your email address.';
+    } else if (!EMAIL_REGEX.test(trimmedEmail)) {
+      errors.email = 'Please enter a valid email address (e.g. you@company.com).';
+    }
+
+    if (trimmedPhone) {
+      const digitsOnly = trimmedPhone.replace(/\D/g, '');
+      if (!/^[+\d\s().-]{7,25}$/.test(trimmedPhone) || digitsOnly.length < 7) {
+        errors.phone = 'Please enter a valid phone number (at least 7 digits) or leave this blank.';
+      }
+    }
+
+    if (!trimmedMessage) {
+      errors.message = 'Please share a brief overview of your project.';
+    } else if (trimmedMessage.length < 10) {
+      errors.message = 'Please write at least 10 characters so we understand your inquiry.';
+    } else if (trimmedMessage.length > 5000) {
+      errors.message = 'Message must be 5,000 characters or fewer.';
+    }
+
+    return {
+      isValid: Object.keys(errors).length === 0,
+      errors,
+      payload: {
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: trimmedPhone,
+        service: service.trim() || 'Website Design',
+        message: trimmedMessage,
+      },
+    };
+  };
+
+  const clearFieldError = (field: keyof FieldErrors) => {
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+    if (errorMessage) {
+      setErrorMessage(null);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
+    if (submitting) return;
+
+    const { isValid, errors, payload } = validateForm();
+    if (!isValid) {
+      setFieldErrors(errors);
+      setErrorMessage('Please review the highlighted fields below before sending your inquiry.');
+
+      if (errors.name) nameInputRef.current?.focus();
+      else if (errors.email) emailInputRef.current?.focus();
+      else if (errors.phone) phoneInputRef.current?.focus();
+      else if (errors.message) messageInputRef.current?.focus();
+      return;
+    }
+
+    setFieldErrors({});
     setErrorMessage(null);
+    setSubmitting(true);
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
     try {
       const res = await fetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, phone, service, message }),
+        body: JSON.stringify(payload),
+        signal: controller.signal,
       });
 
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: {
+        success?: boolean;
+        error?: string;
+        fieldErrors?: FieldErrors;
+      } | null = null;
 
-      if (!res.ok || data.error) {
-        setErrorMessage(
-          data.error || 'Something went wrong while sending your message. Please try again or contact me directly.'
-        );
+      if (rawText) {
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = null;
+        }
+      }
+
+      if (!res.ok || !data?.success || data?.error) {
+        if (data?.fieldErrors) {
+          setFieldErrors(data.fieldErrors);
+        }
+
+        let friendlyMessage = data?.error;
+        if (!friendlyMessage) {
+          if (res.status >= 500) {
+            friendlyMessage =
+              'We could not deliver your email right now due to a server issue. Please try again in a moment or email Precious directly.';
+          } else if (res.status === 400) {
+            friendlyMessage = 'Please check your details and make sure all required fields are valid.';
+          } else {
+            friendlyMessage =
+              'Something went wrong while sending your message. Please try again or reach out directly via email or WhatsApp.';
+          }
+        }
+
+        setErrorMessage(friendlyMessage);
+        requestAnimationFrame(() => {
+          errorBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
         return;
       }
 
+      setName(payload.name);
+      setEmail(payload.email);
+      setPhone(payload.phone);
+      setMessage(payload.message);
       setSubmitted(true);
     } catch (err) {
       console.error('Contact form submission error:', err);
-      setErrorMessage(
-        'Something went wrong while sending your message. Please try again or contact me directly.'
-      );
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setErrorMessage(
+          'Sending your inquiry took longer than expected. Please check your connection and try again, or contact Precious directly.'
+        );
+      } else {
+        setErrorMessage(
+          'Unable to reach the server to send your email. Please check your internet connection and try again, or use direct email / WhatsApp.'
+        );
+      }
+      requestAnimationFrame(() => {
+        errorBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
     } finally {
+      window.clearTimeout(timeoutId);
       setSubmitting(false);
     }
   };
@@ -238,7 +379,11 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
                       setSubmitted(false);
                       setName('');
                       setEmail('');
+                      setPhone('');
+                      setService('Website Design');
                       setMessage('');
+                      setErrorMessage(null);
+                      setFieldErrors({});
                     }}
                     className="px-6 py-2.5 rounded-full bg-neutral-800 text-neutral-200 text-xs font-medium hover:bg-neutral-700"
                   >
@@ -246,65 +391,142 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleSubmit} className="space-y-5">
+                <form onSubmit={handleSubmit} noValidate className="space-y-5">
                   <h3 className="text-xl font-bold text-neutral-100 dark:text-neutral-100 light:text-neutral-900">
                     Send a Direct Inquiry
                   </h3>
 
                   {errorMessage && (
-                    <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
-                      <span>{errorMessage}</span>
+                    <div
+                      ref={errorBannerRef}
+                      role="alert"
+                      id="contact-form-error-banner"
+                      className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 dark:text-red-300 light:text-red-700 text-xs space-y-2"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400 shrink-0 mt-0.5" />
+                        <span className="leading-relaxed font-medium">{errorMessage}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 pl-6 text-[11px]">
+                        <a
+                          href={`mailto:${CONTACT_INFO.email}`}
+                          className="underline hover:text-amber-400 transition-colors"
+                        >
+                          Email {CONTACT_INFO.email}
+                        </a>
+                        <span aria-hidden="true">·</span>
+                        <a
+                          href={CONTACT_INFO.whatsapp}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-amber-400 transition-colors"
+                        >
+                          Message on WhatsApp
+                        </a>
+                      </div>
                     </div>
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
+                      <label htmlFor="contact-name-input" className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
                         Your Name *
                       </label>
                       <input
+                        ref={nameInputRef}
+                        id="contact-name-input"
                         type="text"
                         required
+                        aria-invalid={Boolean(fieldErrors.name)}
+                        aria-describedby={fieldErrors.name ? 'contact-name-error' : undefined}
                         placeholder="Precious Imonikhe"
                         value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border border-neutral-800 dark:border-neutral-800 light:border-stone-300 text-sm focus:outline-none focus:border-amber-400"
+                        onChange={(e) => {
+                          setName(e.target.value);
+                          clearFieldError('name');
+                        }}
+                        className={`w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border text-sm focus:outline-none ${
+                          fieldErrors.name
+                            ? 'border-red-500/70 focus:border-red-400'
+                            : 'border-neutral-800 dark:border-neutral-800 light:border-stone-300 focus:border-amber-400'
+                        }`}
                       />
+                      {fieldErrors.name && (
+                        <p id="contact-name-error" className="mt-1.5 text-xs text-red-500 dark:text-red-400 light:text-red-600 flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{fieldErrors.name}</span>
+                        </p>
+                      )}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
+                      <label htmlFor="contact-email-input" className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
                         Email Address *
                       </label>
                       <input
+                        ref={emailInputRef}
+                        id="contact-email-input"
                         type="email"
                         required
+                        aria-invalid={Boolean(fieldErrors.email)}
+                        aria-describedby={fieldErrors.email ? 'contact-email-error' : undefined}
                         placeholder="you@company.com"
                         value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border border-neutral-800 dark:border-neutral-800 light:border-stone-300 text-sm focus:outline-none focus:border-amber-400"
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          clearFieldError('email');
+                        }}
+                        className={`w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border text-sm focus:outline-none ${
+                          fieldErrors.email
+                            ? 'border-red-500/70 focus:border-red-400'
+                            : 'border-neutral-800 dark:border-neutral-800 light:border-stone-300 focus:border-amber-400'
+                        }`}
                       />
+                      {fieldErrors.email && (
+                        <p id="contact-email-error" className="mt-1.5 text-xs text-red-500 dark:text-red-400 light:text-red-600 flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{fieldErrors.email}</span>
+                        </p>
+                      )}
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
+                    <label htmlFor="contact-phone-input" className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
                       Phone Number (Optional)
                     </label>
                     <input
+                      ref={phoneInputRef}
+                      id="contact-phone-input"
                       type="tel"
+                      aria-invalid={Boolean(fieldErrors.phone)}
+                      aria-describedby={fieldErrors.phone ? 'contact-phone-error' : undefined}
                       placeholder="+1 (555) 000-0000"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border border-neutral-800 dark:border-neutral-800 light:border-stone-300 text-sm focus:outline-none focus:border-amber-400"
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        clearFieldError('phone');
+                      }}
+                      className={`w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border text-sm focus:outline-none ${
+                        fieldErrors.phone
+                          ? 'border-red-500/70 focus:border-red-400'
+                          : 'border-neutral-800 dark:border-neutral-800 light:border-stone-300 focus:border-amber-400'
+                      }`}
                     />
+                    {fieldErrors.phone && (
+                      <p id="contact-phone-error" className="mt-1.5 text-xs text-red-500 dark:text-red-400 light:text-red-600 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{fieldErrors.phone}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
+                    <label htmlFor="contact-service-select" className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
                       Service Interested In
                     </label>
                     <select
+                      id="contact-service-select"
                       value={service}
                       onChange={(e) => setService(e.target.value)}
                       className="w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border border-neutral-800 dark:border-neutral-800 light:border-stone-300 text-sm focus:outline-none focus:border-amber-400 text-neutral-200 dark:text-neutral-200 light:text-neutral-800"
@@ -321,17 +543,34 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onOpenCalendly }) => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
+                    <label htmlFor="contact-message-input" className="block text-xs font-medium text-neutral-300 dark:text-neutral-300 light:text-neutral-700 mb-1">
                       Project Message / Overview *
                     </label>
                     <textarea
+                      ref={messageInputRef}
+                      id="contact-message-input"
                       required
                       rows={4}
+                      aria-invalid={Boolean(fieldErrors.message)}
+                      aria-describedby={fieldErrors.message ? 'contact-message-error' : undefined}
                       placeholder="Describe your goals, current website URL, or project requirements..."
                       value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border border-neutral-800 dark:border-neutral-800 light:border-stone-300 text-sm focus:outline-none focus:border-amber-400"
+                      onChange={(e) => {
+                        setMessage(e.target.value);
+                        clearFieldError('message');
+                      }}
+                      className={`w-full px-4 py-3 rounded-xl bg-neutral-950 dark:bg-neutral-950 light:bg-white border text-sm focus:outline-none ${
+                        fieldErrors.message
+                          ? 'border-red-500/70 focus:border-red-400'
+                          : 'border-neutral-800 dark:border-neutral-800 light:border-stone-300 focus:border-amber-400'
+                      }`}
                     />
+                    {fieldErrors.message && (
+                      <p id="contact-message-error" className="mt-1.5 text-xs text-red-500 dark:text-red-400 light:text-red-600 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{fieldErrors.message}</span>
+                      </p>
+                    )}
                   </div>
 
                   <button

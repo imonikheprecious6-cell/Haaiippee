@@ -17,24 +17,42 @@ import { CalendlyModal } from './components/CalendlyModal';
 
 import { NavPage, Project, VideoTestimonial } from './types';
 
+const PAGE_TITLES: Record<NavPage, string> = {
+  home: 'Precious Imonikhe — Startup & B2B Web Designer & Developer',
+  about: 'About Precious Imonikhe — Startup & B2B Web Designer & Developer',
+  services: 'Services — Web Design, Development & SEO | Precious Imonikhe',
+  portfolio: 'Portfolio & Case Studies | Precious Imonikhe',
+  contact: 'Contact & Book a Discovery Call | Precious Imonikhe',
+};
+
 export default function App() {
   const [currentPage, setCurrentPage] = useState<NavPage>('home');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<VideoTestimonial | null>(null);
   const [isCalendlyOpen, setIsCalendlyOpen] = useState<boolean>(false);
 
-  // Read URL hash on initial load if available
+  // Read URL hash on initial load and restore homepage on root/empty hash
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash.replace('#', '') as NavPage;
-      if (['home', 'about', 'services', 'portfolio', 'contact'].includes(hash)) {
-        setCurrentPage(hash);
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash === '') {
+        setCurrentPage('home');
+      } else if (['home', 'about', 'services', 'portfolio', 'contact'].includes(hash)) {
+        setCurrentPage(hash as NavPage);
       }
     };
     handleHash();
     window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    window.addEventListener('popstate', handleHash);
+    return () => {
+      window.removeEventListener('hashchange', handleHash);
+      window.removeEventListener('popstate', handleHash);
+    };
   }, []);
+
+  useEffect(() => {
+    document.title = PAGE_TITLES[currentPage];
+  }, [currentPage]);
 
   const handlePageChange = (page: NavPage) => {
     setCurrentPage(page);
